@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Instagram Group Sharing</title>
+    <meta
+      name="description"
+      content="Instagram grup sohbetlerine otomatik link paylaşım aracı"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Header -->
+      <header class="app-header">
+        <h1>📸 Instagram Group Sharing</h1>
+        <p>Gruplarınıza otomatik link paylaşın</p>
+      </header>
+
+      <!-- Tab Bar -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="config" id="tab-config-btn">
+          ⚙️ Konfigürasyon
+        </button>
+        <button class="tab-btn" data-tab="send" id="tab-send-btn">
+          📤 Gönder
+        </button>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════
+       TAB 1: Config
+       ═══════════════════════════════════════════════ -->
+      <div class="tab-content active" id="tab-config">
+        <!-- Add Account Card -->
+        <div class="glass-card">
+          <div class="card-title">➕ Hesap Ekle</div>
+          <div class="form-row">
+            <input
+              class="input-field"
+              id="inp-username"
+              type="text"
+              placeholder="Kullanıcı adı"
+              autocomplete="off"
+            />
+            <input
+              class="input-field"
+              id="inp-password"
+              type="password"
+              placeholder="Şifre"
+              autocomplete="off"
+            />
+            <button class="btn btn-primary" id="btn-add-account">Ekle</button>
+          </div>
+        </div>
+
+        <!-- Account List -->
+        <div class="account-list" id="account-list">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- Empty state -->
+        <div class="empty-state" id="accounts-empty">
+          <div class="icon">👤</div>
+          <p>
+            Henüz hesap eklenmedi.<br />Yukarıdan bir Instagram hesabı ekleyin.
+          </p>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════
+       TAB 2: Send
+       ═══════════════════════════════════════════════ -->
+      <div class="tab-content" id="tab-send">
+        <div class="send-section">
+          <!-- Link Input -->
+          <div class="glass-card">
+            <div class="card-title">🔗 Gönderi Linki & Mesaj</div>
+            <div class="link-input-container">
+              <input
+                class="link-input"
+                id="inp-link"
+                type="url"
+                placeholder="https://www.instagram.com/reel/ABC123/"
+              />
+            </div>
+            <div class="link-input-container" style="margin-top: 1rem">
+              <textarea
+                class="link-input"
+                id="inp-message"
+                rows="3"
+                placeholder="Opsiyonel: Gönderiyle birlikte atılacak mesaj..."
+              ></textarea>
+            </div>
+          </div>
+
+          <!-- Account Selection -->
+          <div class="glass-card">
+            <div class="card-title">👥 Gönderilecek Hesaplar</div>
+            <div class="account-select-list" id="send-account-list">
+              <!-- Dynamically populated -->
+            </div>
+            <div
+              class="empty-state"
+              id="send-accounts-empty"
+              style="display: none"
+            >
+              <div class="icon">⚙️</div>
+              <p>
+                Önce Konfigürasyon sekmesinden hesap ekleyin ve grupları seçin.
+              </p>
+            </div>
+          </div>
+
+          <!-- Delay -->
+          <div class="glass-card">
+            <div class="delay-row">
+              <label for="inp-delay">⏱ Gönderimler arası bekleme:</label>
+              <input
+                class="delay-input"
+                id="inp-delay"
+                type="number"
+                value="8"
+                min="1"
+                max="60"
+              />
+              <span style="color: var(--text-muted); font-size: 0.85rem"
+                >saniye</span
+              >
+            </div>
+          </div>
+
+          <!-- Send Button -->
+          <div class="send-actions">
+            <button class="btn btn-success" id="btn-send" disabled>
+              🚀 Gönder
+            </button>
+          </div>
+
+          <!-- Progress -->
+          <div class="progress-container" id="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Gönderiliyor...</div>
+          </div>
+
+          <!-- Results -->
+          <div class="results-panel" id="results-panel">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group Selection Modal -->
+    <div class="modal-overlay" id="modal-groups">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="modal-groups-title">📋 Grupları Seç</h2>
+          <button class="modal-close" id="modal-groups-close">&times;</button>
+        </div>
+        <div id="modal-groups-body">
+          <div class="empty-state">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem">Gruplar yükleniyor...</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="modal-groups-cancel">
+            İptal
+          </button>
+          <button class="btn btn-primary" id="modal-groups-save">
+            💾 Kaydet
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

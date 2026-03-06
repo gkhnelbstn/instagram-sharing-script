@@ -1,0 +1,104 @@
+warning: The `tool.uv.dev-dependencies` field (used in `pyproject.toml`) is deprecated and will be removed in a future release; use `dependency-groups.dev` instead
+INFO:     Started server process [10]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     172.25.0.1:60638 - "GET /api/accounts HTTP/1.1" 200 OK
+INFO:     172.25.0.1:48904 - "POST /api/accounts HTTP/1.1" 200 OK
+INFO:     172.25.0.1:48904 - "GET /api/accounts HTTP/1.1" 200 OK
+2026-03-06 10:51:51,004 [INFO] Session dosyasından giriş yapıldı: f.ceyda.unal
+INFO:     172.25.0.1:48904 - "POST /api/accounts/c6a1ff92-371e-43e4-9642-06ff4d322df2/login HTTP/1.1" 200 OK
+INFO:     172.25.0.1:48904 - "GET /api/accounts HTTP/1.1" 200 OK
+2026-03-06 10:51:56,424 [INFO] Session dosyasından giriş yapıldı: f.ceyda.unal
+INFO:     127.0.0.1:39868 - "GET /health HTTP/1.1" 200 OK
+2026-03-06 10:51:59,415 [INFO] https://i.instagram.com/api/v1/direct_v2/inbox/
+2026-03-06 10:51:59,593 [INFO] f.ceyda.unal [403] GET https://i.instagram.com/api/v1/direct_v2/inbox/?visual_message_return_type=unseen&thread_message_limit=10&persistentBadging=true&limit=20&is_prefetching=false (364.0.0.35.86, OnePlus 6T Dev)
+INFO:     172.25.0.1:33338 - "GET /api/accounts/c6a1ff92-371e-43e4-9642-06ff4d322df2/groups HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/private.py", line 359, in _send_private_request
+    response.raise_for_status()
+  File "/app/.venv/lib/python3.11/site-packages/requests/models.py", line 1026, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 403 Client Error: Forbidden for url: https://i.instagram.com/api/v1/direct_v2/inbox/?visual_message_return_type=unseen&thread_message_limit=10&persistentBadging=true&limit=20&is_prefetching=false
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/applications.py", line 1160, in __call__
+    await super().__call__(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/app/.venv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/app/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 130, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/app/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/app/.venv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 116, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 670, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/fastapi/routing.py", line 326, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/starlette/concurrency.py", line 32, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/anyio/to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 2502, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py", line 986, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/main.py", line 228, in list_groups
+    threads = cl.direct_threads(amount=100)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/direct.py", line 88, in direct_threads
+    threads_chunk, cursor = self.direct_threads_chunk(
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/direct.py", line 150, in direct_threads_chunk
+    result = self.private_request("direct_v2/inbox/", params=params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/private.py", line 550, in private_request
+    raise e
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/private.py", line 535, in private_request
+    self._send_private_request(endpoint, **kwargs)
+  File "/app/.venv/lib/python3.11/site-packages/instagrapi/mixins/private.py", line 388, in _send_private_request
+    raise ClientForbiddenError(e, response=e.response, **last_json)
+instagrapi.exceptions.ClientForbiddenError: 403 Client Error: Forbidden for url: https://i.instagram.com/api/v1/direct_v2/inbox/?visual_message_return_type=unseen&thread_message_limit=10&persistentBadging=true&limit=20&is_prefetching=false
+INFO:     127.0.0.1:53558 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36842 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48852 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57728 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50974 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41796 - "GET /health HTTP/1.1" 200 OK

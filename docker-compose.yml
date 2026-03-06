@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  insta-api:
+    build: .
+    container_name: insta-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - insta-sessions:/app/sessions
+      - insta-config:/app/config
+    environment:
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  insta-sessions:
+    driver: local
+  insta-config:
+    driver: local
