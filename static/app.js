@@ -7,6 +7,7 @@
 const API = {
   async get(url) {
     const res = await fetch(url);
+    if (res.status === 401) { showAuthOverlay(); throw new Error('Oturum sona erdi.'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || 'Bilinmeyen hata');
@@ -20,6 +21,7 @@ const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 401 && !url.includes('/auth/')) { showAuthOverlay(); throw new Error('Oturum sona erdi.'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || 'Bilinmeyen hata');
@@ -33,6 +35,7 @@ const API = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 401) { showAuthOverlay(); throw new Error('Oturum sona erdi.'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || 'Bilinmeyen hata');
@@ -42,6 +45,7 @@ const API = {
 
   async delete(url) {
     const res = await fetch(url, { method: 'DELETE' });
+    if (res.status === 401) { showAuthOverlay(); throw new Error('Oturum sona erdi.'); }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || 'Bilinmeyen hata');
@@ -61,6 +65,108 @@ function showToast(message, type = 'info') {
   setTimeout(() => toast.remove(), 4000);
 }
 
+// ─── Auth overlay ─────────────────────────────────────────────────────
+
+let authMode = 'login'; // 'login' | 'register'
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').style.display = '';
+  document.getElementById('app-container').style.display = 'none';
+  document.getElementById('auth-error').textContent = '';
+  document.getElementById('auth-username').value = '';
+  document.getElementById('auth-password').value = '';
+}
+
+function hideAuthOverlay(username) {
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('app-container').style.display = '';
+  document.getElementById('header-username').textContent = `👤 ${username}`;
+  loadAccounts();
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const isLogin = mode === 'login';
+  document.getElementById('auth-subtitle').textContent = isLogin ? 'Giriş yap' : 'Hesap oluştur';
+  document.getElementById('auth-submit-btn').textContent = isLogin ? 'Giriş Yap' : 'Kayıt Ol';
+  document.getElementById('auth-toggle-link').innerHTML = isLogin
+    ? 'Hesabın yok mu? <span>Kayıt ol</span>'
+    : 'Zaten hesabın var mı? <span>Giriş yap</span>';
+  document.getElementById('auth-error').textContent = '';
+}
+
+document.getElementById('auth-toggle-link').addEventListener('click', () => {
+  setAuthMode(authMode === 'login' ? 'register' : 'login');
+});
+
+document.getElementById('auth-submit-btn').addEventListener('click', async () => {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl = document.getElementById('auth-error');
+  const btn = document.getElementById('auth-submit-btn');
+
+  if (!username || !password) {
+    errEl.textContent = 'Kullanıcı adı ve şifre zorunlu.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  errEl.textContent = '';
+
+  try {
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const data = await API.post(endpoint, { username, password });
+    hideAuthOverlay(data.username);
+    showToast(`Hoş geldin, ${data.username}!`, 'success');
+  } catch (e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = authMode === 'login' ? 'Giriş Yap' : 'Kayıt Ol';
+  }
+});
+
+// Enter key
+document.getElementById('auth-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
+});
+
+// Logout
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  try {
+    await API.post('/api/auth/logout', {});
+  } catch (_) { /* ignore */ }
+  showAuthOverlay();
+  showToast('Çıkış yapıldı.', 'info');
+});
+
+// ─── Init — oturumu kontrol et ────────────────────────────────────────
+
+async function initApp() {
+  try {
+    // Önce kurulum gerekli mi kontrol et
+    const setup = await fetch('/api/auth/setup').then(r => r.json());
+    if (setup.needs_setup) {
+      setAuthMode('register');
+      document.getElementById('auth-toggle-link').style.display = 'none';
+      document.getElementById('auth-subtitle').textContent = 'İlk kullanım — hesap oluştur';
+      showAuthOverlay();
+      return;
+    }
+
+    // Mevcut session kontrol et
+    const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
+    if (me) {
+      hideAuthOverlay(me.username);
+    } else {
+      showAuthOverlay();
+    }
+  } catch (_) {
+    showAuthOverlay();
+  }
+}
+
 // ─── Tab switching ───────────────────────────────────────────────────
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -69,11 +175,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-
-    // Refresh send tab data when switching to it
-    if (btn.dataset.tab === 'send') {
-      renderSendAccountList();
-    }
+    if (btn.dataset.tab === 'send') renderSendAccountList();
   });
 });
 
@@ -84,7 +186,7 @@ async function loadAccounts() {
     const accounts = await API.get('/api/accounts');
     renderAccountList(accounts);
   } catch (e) {
-    showToast(e.message, 'error');
+    if (e.message !== 'Oturum sona erdi.') showToast(e.message, 'error');
   }
 }
 
@@ -490,4 +592,4 @@ function escapeAttr(str) {
 
 // ─── Init ────────────────────────────────────────────────────────────
 
-loadAccounts();
+initApp();

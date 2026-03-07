@@ -11,11 +11,53 @@
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <div class="app-container">
+
+    <!-- ═══════════════════════════════════════════════
+     AUTH OVERLAY — Uygulama başladığında gösterilir
+     ═══════════════════════════════════════════════ -->
+    <div class="auth-overlay" id="auth-overlay">
+      <div class="auth-box glass-card">
+        <div class="auth-logo">📸</div>
+        <h2 class="auth-title" id="auth-title">Instagram Group Sharing</h2>
+        <p class="auth-subtitle" id="auth-subtitle">Giriş yap</p>
+
+        <div class="form-col" id="auth-form">
+          <input
+            class="input-field"
+            id="auth-username"
+            type="text"
+            placeholder="Kullanıcı adı"
+            autocomplete="username"
+          />
+          <input
+            class="input-field"
+            id="auth-password"
+            type="password"
+            placeholder="Şifre"
+            autocomplete="current-password"
+          />
+          <button class="btn btn-primary btn-full" id="auth-submit-btn">
+            Giriş Yap
+          </button>
+          <div class="auth-error" id="auth-error"></div>
+          <button class="btn-link" id="auth-toggle-link">
+            Hesabın yok mu? <span>Kayıt ol</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-container" id="app-container" style="display:none;">
       <!-- Header -->
       <header class="app-header">
-        <h1>📸 Instagram Group Sharing</h1>
-        <p>Gruplarınıza otomatik link paylaşın</p>
+        <div>
+          <h1>📸 Instagram Group Sharing</h1>
+          <p>Gruplarınıza otomatik link paylaşın</p>
+        </div>
+        <div class="header-user">
+          <span class="header-username" id="header-username"></span>
+          <button class="btn btn-secondary btn-sm" id="btn-logout">Çıkış</button>
+        </div>
       </header>
 
       <!-- Tab Bar -->
@@ -55,9 +97,7 @@
         </div>
 
         <!-- Account List -->
-        <div class="account-list" id="account-list">
-          <!-- Dynamically populated -->
-        </div>
+        <div class="account-list" id="account-list"></div>
 
         <!-- Empty state -->
         <div class="empty-state" id="accounts-empty">
@@ -97,9 +137,7 @@
           <!-- Account Selection -->
           <div class="glass-card">
             <div class="card-title">👥 Gönderilecek Hesaplar</div>
-            <div class="account-select-list" id="send-account-list">
-              <!-- Dynamically populated -->
-            </div>
+            <div class="account-select-list" id="send-account-list"></div>
             <div
               class="empty-state"
               id="send-accounts-empty"
@@ -124,9 +162,7 @@
                 min="1"
                 max="60"
               />
-              <span style="color: var(--text-muted); font-size: 0.85rem"
-                >saniye</span
-              >
+              <span style="color: var(--text-muted); font-size: 0.85rem">saniye</span>
             </div>
           </div>
 
@@ -146,9 +182,7 @@
           </div>
 
           <!-- Results -->
-          <div class="results-panel" id="results-panel">
-            <!-- Dynamically populated -->
-          </div>
+          <div class="results-panel" id="results-panel"></div>
         </div>
       </div>
     </div>
@@ -167,12 +201,8 @@
           </div>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" id="modal-groups-cancel">
-            İptal
-          </button>
-          <button class="btn btn-primary" id="modal-groups-save">
-            💾 Kaydet
-          </button>
+          <button class="btn btn-secondary" id="modal-groups-cancel">İptal</button>
+          <button class="btn btn-primary" id="modal-groups-save">💾 Kaydet</button>
         </div>
       </div>
     </div>

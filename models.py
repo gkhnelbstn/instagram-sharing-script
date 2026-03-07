@@ -41,6 +41,22 @@ class AppConfig(BaseModel):
     """Tüm uygulama konfigürasyonu (config.json)."""
 
     accounts: list[AccountConfig] = []
+    owner_id: str | None = None  # hangi AppUser'a ait
+
+
+class AppUser(BaseModel):
+    """Uygulamaya giriş yapan kullanıcı hesabı."""
+
+    id: str = Field(..., description="Benzersiz kullanıcı ID'si (UUID)")
+    username: str
+    hashed_password: str  # bcrypt hash
+    session_token: str | None = None  # aktif oturum tokeni
+
+
+class UsersConfig(BaseModel):
+    """Tüm uygulama kullanıcıları (users.json)."""
+
+    users: list[AppUser] = []
 
 
 # ---------------------------------------------------------------------------
@@ -102,3 +118,14 @@ class AccountSendResult(BaseModel):
 class SendResponse(BaseModel):
     total_accounts: int
     account_results: list[AccountSendResult] = []
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AppLoginRequest(BaseModel):
+    username: str
+    password: str
+

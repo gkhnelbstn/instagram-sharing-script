@@ -8,11 +8,15 @@ Web UI ile hesap, grup yönetimi ve gönderim yapılır.
 import json
 import logging
 import os
+import re
+import secrets
 import time
+import traceback
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+import bcrypt
+from fastapi import Cookie, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from instagrapi import Client
@@ -22,18 +26,21 @@ from instagrapi.exceptions import (
     LoginRequired,
     TwoFactorRequired,
 )
+from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
 from models import (
     AccountConfig,
     AccountSendResult,
     AddAccountRequest,
     AppConfig,
-    GroupConfig,
-    GroupInfo,
+    AppLoginRequest,
+    AppUser,
     GroupResult,
+    RegisterRequest,
     SaveGroupsRequest,
     SendRequest,
     SendResponse,
+    UsersConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,8 +54,16 @@ app = FastAPI(
 )
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
 logger = logging.getLogger(__name__)
+
+# instagrapi dahili loglarını da aç (challenge, auth vb. ayrıntılar görünsün)
+logging.getLogger("instagrapi").setLevel(logging.DEBUG)
+logging.getLogger("public_request").setLevel(logging.DEBUG)
+logging.getLogger("private_request").setLevel(logging.DEBUG)
 
 SESSIONS_DIR = Path("sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
@@ -56,38 +71,85 @@ SESSIONS_DIR.mkdir(exist_ok=True)
 CONFIG_DIR = Path("config")
 CONFIG_DIR.mkdir(exist_ok=True)
 CONFIG_FILE = CONFIG_DIR / "config.json"
+USERS_FILE = CONFIG_DIR / "users.json"
+
+SESSION_COOKIE = "ig_session"
+
+# ---------------------------------------------------------------------------
+# Users helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_users() -> UsersConfig:
+    if USERS_FILE.exists():
+        try:
+            data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+            return UsersConfig(**data)
+        except Exception as exc:
+            logger.error("users.json okunamadı: %s", exc)
+    return UsersConfig()
+
+
+def _save_users(users: UsersConfig) -> None:
+    tmp = USERS_FILE.with_suffix(".tmp")
+    try:
+        tmp.write_text(users.model_dump_json(indent=2), encoding="utf-8")
+        tmp.replace(USERS_FILE)
+    except Exception as exc:
+        logger.error("users.json kaydedilemedi: %s", exc)
+        tmp.unlink(missing_ok=True)
+
+
+def _hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def _get_current_user(ig_session: str | None = Cookie(default=None)) -> AppUser:
+    """Cookie'den oturumu doğrula, kullanıcıyı döndür."""
+    if not ig_session:
+        raise HTTPException(status_code=401, detail="Oturum açılmamış.")
+    users = _load_users()
+    for u in users.users:
+        if u.session_token and secrets.compare_digest(u.session_token, ig_session):
+            return u
+    raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş oturum.")
+
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_config() -> AppConfig:
-    if CONFIG_FILE.exists():
+def _config_file(owner_id: str) -> Path:
+    """Her kullanıcının config dosyası ayrı tutulur."""
+    return CONFIG_DIR / f"config_{owner_id}.json"
+
+
+def _load_config(owner_id: str) -> AppConfig:
+    f = _config_file(owner_id)
+    if f.exists():
         try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            data = json.loads(f.read_text(encoding="utf-8"))
             return AppConfig(**data)
         except Exception as exc:
-            logger.error(
-                "Konfigürasyon okunamadı, bozulmuş olabilir. Yeni config oluşturuluyor: %s",
-                exc,
-            )
-            return AppConfig()
-    return AppConfig()
+            logger.error("Konfigürasyon okunamadı: %s", exc)
+    return AppConfig(owner_id=owner_id)
 
 
 def _save_config(config: AppConfig) -> None:
-    temp_file = CONFIG_FILE.with_suffix(".tmp")
+    assert config.owner_id, "owner_id zorunlu"
+    f = _config_file(config.owner_id)
+    tmp = f.with_suffix(".tmp")
     try:
-        temp_file.write_text(
-            config.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        temp_file.replace(CONFIG_FILE)
+        tmp.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        tmp.replace(f)
     except Exception as exc:
         logger.error("Konfigürasyon kaydedilemedi: %s", exc)
-        if temp_file.exists():
-            temp_file.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
 
 
 def _find_account(config: AppConfig, account_id: str) -> AccountConfig:
@@ -103,61 +165,176 @@ def _find_account(config: AppConfig, account_id: str) -> AccountConfig:
 
 
 def _get_client(username: str, password: str) -> Client:
-    """instagrapi Client oluştur, session varsa yükle, yoksa login ol."""
+    """
+    instagrapi Client oluştur.
+
+    Strateji (instagrapi best-practices):
+      1. Session dosyası varsa yükle → login(username, password) çağır
+         (bu aslında session ile devam eder, şifreyle yeniden giriş yapmaz).
+      2. get_timeline_feed() ile session'ın geçerliliğini doğrula.
+      3. Session geçersizse → aynı device UUID'leri koruyarak temiz login yap.
+      4. Session dosyası yoksa → doğrudan login.
+    """
     cl = Client()
-    cl.delay_range = [1, 3]
+    cl.delay_range = [2, 5]
 
     session_file = SESSIONS_DIR / f"{username}.json"
+    login_via_session = False
+    login_via_pw = False
 
-    try:
-        if session_file.exists():
+    # ── 1) Session dosyasından giriş dene ──
+    if session_file.exists():
+        try:
             cl.load_settings(session_file)
             cl.login(username, password)
-            logger.info("Session dosyasından giriş yapıldı: %s", username)
-        else:
-            cl.login(username, password)
-            logger.info("Yeni giriş yapıldı: %s", username)
+            logger.info("[%s] Session dosyasından giriş deneniyor…", username)
 
-        cl.dump_settings(session_file)
-        return cl
+            # Session geçerli mi kontrol et
+            try:
+                cl.get_timeline_feed()
+                login_via_session = True
+                logger.info("[%s] ✅ Session geçerli.", username)
+            except LoginRequired:
+                logger.warning(
+                    "[%s] Session geçersiz (LoginRequired), temiz login yapılacak…",
+                    username,
+                )
+                old_session = cl.get_settings()
 
-    except BadPassword:
-        raise HTTPException(status_code=401, detail=f"Hatalı şifre: {username}")
-    except TwoFactorRequired:
-        raise HTTPException(
-            status_code=403,
-            detail=f"2FA doğrulaması gerekli: {username}",
-        )
-    except ChallengeRequired:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Instagram challenge istiyor: {username}. Uygulamadan onaylayın.",
-        )
-    except LoginRequired:
-        if session_file.exists():
-            session_file.unlink()
-            logger.warning("Geçersiz session silindi: %s", username)
-            cl = Client()
-            cl.delay_range = [1, 3]
-            cl.login(username, password)
-            cl.dump_settings(session_file)
-            return cl
-        raise HTTPException(status_code=401, detail=f"Giriş yapılamadı: {username}")
-    except Exception as exc:
-        logger.exception("Login hatası: %s", username)
+                # Yeni client — ama aynı device UUID'leri koru (Instagram güveni)
+                cl.set_settings({})
+                cl.set_uuids(old_session["uuids"])
 
-        exc_str = str(exc)
-        exc_type = str(type(exc))
+                cl.login(username, password)
+                login_via_session = True
+                logger.info("[%s] ✅ Temiz login (aynı device) başarılı.", username)
 
-        if "JSONDecodeError" in exc_type or "challenge" in exc_str.lower():
+        except BadPassword:
+            raise HTTPException(status_code=401, detail=f"Hatalı şifre: {username}")
+        except TwoFactorRequired:
             raise HTTPException(
                 status_code=403,
-                detail="Instagram güvenlik doğrulaması (Challenge) istiyor. "
-                "Lütfen Instagram uygulamasını veya web'i açarak şüpheli girişi "
-                "('Bendim' diyerek) onaylayıp işlemi tekrar deneyin.",
+                detail=f"2FA doğrulaması gerekli: {username}",
+            )
+        except ChallengeRequired as exc:
+            logger.error(
+                "[%s] Instagram challenge istiyor (session ile): %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            # Bozuk session'ı sil ki bir sonraki denemede temiz başlansın
+            session_file.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Instagram güvenlik doğrulaması (Challenge) istiyor: {username}. "
+                    "Lütfen Instagram uygulamasını veya web'i açarak 'Bendim' diyerek "
+                    "onaylayın, ardından tekrar deneyin."
+                ),
+            )
+        except (RequestsJSONDecodeError, json.JSONDecodeError) as exc:
+            logger.error(
+                "[%s] Challenge sırasında JSON parse hatası (session bozulmuş olabilir): %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            session_file.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Instagram güvenlik doğrulaması (Challenge) yanıtı okunamadı. "
+                    "Eski session silindi. Lütfen Instagram uygulamasını veya web'i "
+                    "açarak şüpheli giriş uyarısını ('Bendim' diyerek) onaylayıp "
+                    "tekrar Login butonuna basın."
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "[%s] Session ile giriş başarısız: %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            # Session dosyası bozuk olabilir, bir sonraki denemede temiz başla
+            session_file.unlink(missing_ok=True)
+
+    # ── 2) Session yoksa / başarısızsa → şifre ile login ──
+    if not login_via_session:
+        try:
+            logger.info(
+                "[%s] Şifre ile yeni giriş yapılıyor…", username
+            )
+            cl = Client()
+            cl.delay_range = [2, 5]
+            cl.login(username, password)
+            login_via_pw = True
+            logger.info("[%s] ✅ Şifre ile giriş başarılı.", username)
+
+        except BadPassword:
+            raise HTTPException(status_code=401, detail=f"Hatalı şifre: {username}")
+        except TwoFactorRequired:
+            raise HTTPException(
+                status_code=403,
+                detail=f"2FA doğrulaması gerekli: {username}",
+            )
+        except ChallengeRequired as exc:
+            logger.error(
+                "[%s] Instagram challenge istiyor (şifre ile): %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Instagram güvenlik doğrulaması (Challenge) istiyor: {username}. "
+                    "Lütfen Instagram uygulamasını veya web'i açarak 'Bendim' diyerek "
+                    "onaylayın, ardından tekrar deneyin."
+                ),
+            )
+        except (RequestsJSONDecodeError, json.JSONDecodeError) as exc:
+            logger.error(
+                "[%s] Login sırasında JSON parse hatası (challenge sayfası boş yanıt döndü): %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Instagram güvenlik doğrulaması (Challenge) yanıtı okunamadı. "
+                    "Lütfen Instagram uygulamasını veya web'i açarak şüpheli giriş "
+                    "uyarısını ('Bendim' diyerek) onaylayıp tekrar Login butonuna basın."
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "[%s] Login hatası: %s\n%s",
+                username,
+                exc,
+                traceback.format_exc(),
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Login hatası: {type(exc).__name__}: {exc}",
             )
 
-        raise HTTPException(status_code=500, detail=f"Login hatası: {str(exc)}")
+    if not login_via_session and not login_via_pw:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hesaba giriş yapılamadı: {username}. Session ve şifre ile denendi.",
+        )
+
+    # ── 3) Session'ı kaydet ──
+    try:
+        cl.dump_settings(session_file)
+        logger.debug("[%s] Session dosyası kaydedildi.", username)
+    except Exception as exc:
+        logger.warning("[%s] Session dosyası kaydedilemedi: %s", username, exc)
+
+    return cl
 
 
 # ---------------------------------------------------------------------------
@@ -171,14 +348,101 @@ def health():
 
 
 # ---------------------------------------------------------------------------
+# API — Auth (register / login / logout / me)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/auth/register")
+def register(req: RegisterRequest, response: Response):
+    """Yeni kullanıcı kaydı (ilk kullanımda veya ek kullanıcı için)."""
+    if not req.username or not req.password:
+        raise HTTPException(status_code=400, detail="Kullanıcı adı ve şifre zorunlu.")
+    users = _load_users()
+    for u in users.users:
+        if u.username.lower() == req.username.lower():
+            raise HTTPException(status_code=409, detail="Bu kullanıcı adı zaten kayıtlı.")
+    token = secrets.token_urlsafe(32)
+    new_user = AppUser(
+        id=str(uuid.uuid4()),
+        username=req.username,
+        hashed_password=_hash_password(req.password),
+        session_token=token,
+    )
+    users.users.append(new_user)
+    _save_users(users)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 gün
+    )
+    return {"ok": True, "username": new_user.username}
+
+
+@app.post("/api/auth/login")
+def app_login(req: AppLoginRequest, response: Response):
+    """Kullanıcı girişi — session cookie set eder."""
+    users = _load_users()
+    user = next((u for u in users.users if u.username.lower() == req.username.lower()), None)
+    if not user or not _check_password(req.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+    token = secrets.token_urlsafe(32)
+    user.session_token = token
+    _save_users(users)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return {"ok": True, "username": user.username}
+
+
+@app.post("/api/auth/logout")
+def app_logout(response: Response, ig_session: str | None = Cookie(default=None)):
+    """Oturumu sonlandır — cookie sil ve tokeni geçersiz kıl."""
+    if ig_session:
+        users = _load_users()
+        for u in users.users:
+            if u.session_token and secrets.compare_digest(u.session_token, ig_session):
+                u.session_token = None
+                _save_users(users)
+                break
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(ig_session: str | None = Cookie(default=None)):
+    """Mevcut oturumu kontrol et."""
+    if not ig_session:
+        raise HTTPException(status_code=401, detail="Oturum açılmamış.")
+    users = _load_users()
+    for u in users.users:
+        if u.session_token and secrets.compare_digest(u.session_token, ig_session):
+            return {"username": u.username, "id": u.id}
+    raise HTTPException(status_code=401, detail="Geçersiz oturum.")
+
+
+@app.get("/api/auth/setup")
+def auth_setup():
+    """İlk kurulum gerekiyor mu? (hiç kullanıcı yoksa True döner)"""
+    users = _load_users()
+    return {"needs_setup": len(users.users) == 0}
+
+
+# ---------------------------------------------------------------------------
 # API — Account CRUD
 # ---------------------------------------------------------------------------
 
 
 @app.get("/api/accounts")
-def get_accounts():
+def get_accounts(ig_session: str | None = Cookie(default=None)):
     """Tüm hesapları listele (şifreler maskelenir)."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
     return [
         {
             "id": acc.id,
@@ -191,11 +455,11 @@ def get_accounts():
 
 
 @app.post("/api/accounts")
-def add_account(req: AddAccountRequest):
+def add_account(req: AddAccountRequest, ig_session: str | None = Cookie(default=None)):
     """Yeni hesap ekle."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
 
-    # Aynı username varsa hata
     for acc in config.accounts:
         if acc.username == req.username:
             raise HTTPException(status_code=409, detail="Bu hesap zaten ekli.")
@@ -211,16 +475,19 @@ def add_account(req: AddAccountRequest):
 
 
 @app.delete("/api/accounts/{account_id}")
-def delete_account(account_id: str):
+def delete_account(account_id: str, ig_session: str | None = Cookie(default=None)):
     """Hesabı sil."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
+
+    # Silinecek hesabın username'ini bul (session dosyasını da silmek için)
+    acc_to_del = next((a for a in config.accounts if a.id == account_id), None)
     config.accounts = [a for a in config.accounts if a.id != account_id]
     _save_config(config)
 
-    # Session dosyasını da sil
-    for f in SESSIONS_DIR.glob("*.json"):
-        # Dosya adının username olup olmadığını kontrol et
-        pass
+    if acc_to_del:
+        sf = SESSIONS_DIR / f"{acc_to_del.username}.json"
+        sf.unlink(missing_ok=True)
 
     return {"ok": True}
 
@@ -231,9 +498,10 @@ def delete_account(account_id: str):
 
 
 @app.post("/api/accounts/{account_id}/login")
-def login_account(account_id: str):
+def login_account(account_id: str, ig_session: str | None = Cookie(default=None)):
     """Hesaba giriş yap ve durumunu güncelle."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
     acc = _find_account(config, account_id)
 
     _get_client(acc.username, acc.password)
@@ -244,9 +512,10 @@ def login_account(account_id: str):
 
 
 @app.get("/api/accounts/{account_id}/groups")
-def list_groups(account_id: str):
+def list_groups(account_id: str, ig_session: str | None = Cookie(default=None)):
     """Hesaptaki tüm grup thread'lerini listele."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
     acc = _find_account(config, account_id)
 
     cl = _get_client(acc.username, acc.password)
@@ -257,7 +526,6 @@ def list_groups(account_id: str):
         threads = cl.direct_threads(amount=100)
     except Exception as exc:
         logger.error("Grup listeleme hatası (%s): %s", acc.username, str(exc))
-        # Eğer 403 Forbidden alırsak (session patlamış olabilir), session'ı temizle ki kullanıcı tekrar giriş yapabilsin
         if "403 Client Error" in str(exc) or "Forbidden" in str(exc):
             acc.logged_in = False
             _save_config(config)
@@ -269,8 +537,6 @@ def list_groups(account_id: str):
         raise HTTPException(status_code=500, detail=f"Gruplar alınamadı: {str(exc)}")
 
     group_threads = [t for t in threads if len(t.users) > 1]
-
-    # Önceden seçilmiş grupların ID'lerini topla
     selected_ids = {g.thread_id for g in acc.selected_groups}
 
     return [
@@ -285,9 +551,10 @@ def list_groups(account_id: str):
 
 
 @app.put("/api/accounts/{account_id}/groups")
-def save_selected_groups(account_id: str, req: SaveGroupsRequest):
+def save_selected_groups(account_id: str, req: SaveGroupsRequest, ig_session: str | None = Cookie(default=None)):
     """Hesap için seçili grupları kaydet."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
     acc = _find_account(config, account_id)
     acc.selected_groups = req.groups
     _save_config(config)
@@ -299,10 +566,86 @@ def save_selected_groups(account_id: str, req: SaveGroupsRequest):
 # ---------------------------------------------------------------------------
 
 
+def _is_instagram_url(url: str) -> bool:
+    """Verilen URL bir Instagram gönderisi mi?"""
+    return bool(re.search(r"instagram\.com/(p|reel|tv)/", url))
+
+
+def _send_to_thread(
+    cl: "Client",
+    thread_id: str,
+    link: str,
+    message: str | None,
+    media_pk: int | None,
+) -> tuple[int | None, str]:
+    """
+    Bir thread'e link + opsiyonel mesaj gönder.
+
+    Returns:
+        (güncellenmiş media_pk, method_used)
+    """
+    method_used = "text"
+
+    # ── Instagram gönderisi ise media_share dene ──
+    if _is_instagram_url(link):
+        if media_pk is None:
+            try:
+                media_pk = cl.media_pk_from_url(link)
+                logger.debug("Media PK çözümlendi: %s → %s", link, media_pk)
+            except Exception as exc:
+                logger.warning(
+                    "media_pk_from_url başarısız, düz link gönderiliyor: %s", exc
+                )
+                media_pk = None
+
+        if media_pk is not None:
+            try:
+                # direct_media_share sadece user_ids alıyor (thread_ids yok)
+                # Thread'in kullanıcılarını al
+                thread = cl.direct_thread(int(thread_id), amount=1)
+                user_ids = [int(u.pk) for u in thread.users]
+                if not user_ids:
+                    raise ValueError("Thread'de kullanıcı bulunamadı")
+
+                cl.direct_media_share(
+                    media_id=str(media_pk),
+                    user_ids=user_ids,
+                )
+                method_used = "media_share"
+                logger.debug(
+                    "Media share gönderildi (thread_id=%s, media_pk=%s)",
+                    thread_id,
+                    media_pk,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "direct_media_share başarısız, düz link gönderiliyor: %s", exc
+                )
+                # Fallback: düz link olarak gönder
+                cl.direct_send(text=link, thread_ids=[int(thread_id)])
+                method_used = "text_fallback"
+        else:
+            # media_pk alınamadı, düz link gönder
+            cl.direct_send(text=link, thread_ids=[int(thread_id)])
+            method_used = "text"
+    else:
+        # Instagram dışı link (YouTube, Twitter vb.) — düz metin olarak gönder
+        cl.direct_send(text=link, thread_ids=[int(thread_id)])
+        method_used = "text"
+
+    # ── Opsiyonel mesaj ──
+    if message and message.strip():
+        time.sleep(1)
+        cl.direct_send(text=message.strip(), thread_ids=[int(thread_id)])
+
+    return media_pk, method_used
+
+
 @app.post("/api/send", response_model=SendResponse)
-def send_link(req: SendRequest):
+def send_link(req: SendRequest, ig_session: str | None = Cookie(default=None)):
     """Seçili hesap(lar)ın seçili gruplarına link gönder."""
-    config = _load_config()
+    current_user = _get_current_user(ig_session)
+    config = _load_config(current_user.id)
 
     account_results: list[AccountSendResult] = []
 
@@ -341,49 +684,38 @@ def send_link(req: SendRequest):
             )
             continue
 
-        # 1. URL'den Media ID'sini çıkarmayı dene
-        try:
-            # We use the first client we successfully log in to fetch the media_pk
-            # If we haven't logged in yet, we'll do it in the loop below. But we need it once.
-            media_pk = None
-        except Exception as e:
-            pass  # We will handle this in the loop more robustly
-
+        # media_pk hesap başına tek sefer çözümlenir (her grup için tekrar istek atmaz)
+        media_pk: int | None = None
         results: list[GroupResult] = []
+
         for idx, group in enumerate(acc.selected_groups):
             try:
-                # Get media pk if we don't have it yet
-                if "media_pk" not in locals() or media_pk is None:
-                    try:
-                        media_pk = cl.media_pk_from_url(req.link)
-                    except Exception as e:
-                        logger.error("Media ID çıkarılamadı: %s", req.link)
-                        raise ValueError(
-                            f"Geçersiz Instagram linki veya gönderi gizli: {str(e)}"
-                        )
-
-                # 1. Gönderiyi paylaş
-                cl.direct_media_share(
-                    media_id=media_pk, thread_ids=[int(group.thread_id)]
+                media_pk, method = _send_to_thread(
+                    cl=cl,
+                    thread_id=group.thread_id,
+                    link=req.link,
+                    message=req.message,
+                    media_pk=media_pk,
                 )
-
-                # 2. Varsa opsiyonel mesajı gönder (üzerine biraz gecikme ekleyerek)
-                if req.message and req.message.strip():
-                    time.sleep(1)  # Mesajlar arası minik bir es
-                    cl.direct_send(
-                        text=req.message.strip(), thread_ids=[int(group.thread_id)]
-                    )
-
-                logger.info("✅ [%s] → %s", acc.username, group.thread_title)
+                logger.info(
+                    "✅ [%s] → %s (%s)", acc.username, group.thread_title, method
+                )
                 results.append(
                     GroupResult(
                         thread_id=group.thread_id,
                         group=group.thread_title,
                         status="ok",
+                        message=f"method={method}",
                     )
                 )
             except Exception as exc:
-                logger.error("❌ [%s] → %s: %s", acc.username, group.thread_title, exc)
+                logger.error(
+                    "❌ [%s] → %s: %s\n%s",
+                    acc.username,
+                    group.thread_title,
+                    exc,
+                    traceback.format_exc(),
+                )
                 results.append(
                     GroupResult(
                         thread_id=group.thread_id,
