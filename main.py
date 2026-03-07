@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 SESSIONS_DIR = Path("sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
 
-CONFIG_FILE = Path("config.json")
+CONFIG_DIR = Path("config")
+CONFIG_DIR.mkdir(exist_ok=True)
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -62,16 +64,30 @@ CONFIG_FILE = Path("config.json")
 
 def _load_config() -> AppConfig:
     if CONFIG_FILE.exists():
-        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return AppConfig(**data)
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return AppConfig(**data)
+        except Exception as exc:
+            logger.error(
+                "Konfigürasyon okunamadı, bozulmuş olabilir. Yeni config oluşturuluyor: %s",
+                exc,
+            )
+            return AppConfig()
     return AppConfig()
 
 
 def _save_config(config: AppConfig) -> None:
-    CONFIG_FILE.write_text(
-        config.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
+    temp_file = CONFIG_FILE.with_suffix(".tmp")
+    try:
+        temp_file.write_text(
+            config.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        temp_file.replace(CONFIG_FILE)
+    except Exception as exc:
+        logger.error("Konfigürasyon kaydedilemedi: %s", exc)
+        if temp_file.exists():
+            temp_file.unlink(missing_ok=True)
 
 
 def _find_account(config: AppConfig, account_id: str) -> AccountConfig:
@@ -129,6 +145,18 @@ def _get_client(username: str, password: str) -> Client:
         raise HTTPException(status_code=401, detail=f"Giriş yapılamadı: {username}")
     except Exception as exc:
         logger.exception("Login hatası: %s", username)
+
+        exc_str = str(exc)
+        exc_type = str(type(exc))
+
+        if "JSONDecodeError" in exc_type or "challenge" in exc_str.lower():
+            raise HTTPException(
+                status_code=403,
+                detail="Instagram güvenlik doğrulaması (Challenge) istiyor. "
+                "Lütfen Instagram uygulamasını veya web'i açarak şüpheli girişi "
+                "('Bendim' diyerek) onaylayıp işlemi tekrar deneyin.",
+            )
+
         raise HTTPException(status_code=500, detail=f"Login hatası: {str(exc)}")
 
 
@@ -233,12 +261,10 @@ def list_groups(account_id: str):
         if "403 Client Error" in str(exc) or "Forbidden" in str(exc):
             acc.logged_in = False
             _save_config(config)
-            session_file = SESSIONS_DIR / f"{acc.username}.json"
-            if session_file.exists():
-                session_file.unlink()
             raise HTTPException(
                 status_code=401,
-                detail="Oturum süresi dolmuş veya geçersiz. Lütfen hesaba tekrar giriş yapın (Login).",
+                detail="Instagram isteği reddetti (403 Forbidden) veya oturum geçersiz. "
+                "Hesabınıza web/mobil'den girip uyarı varsa onaylayın ve tekrar Login yapın.",
             )
         raise HTTPException(status_code=500, detail=f"Gruplar alınamadı: {str(exc)}")
 
