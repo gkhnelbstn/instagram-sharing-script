@@ -8,10 +8,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - insta-sessions:/app/sessions
-      - insta-config:/app/config
+      - insta-data:/data
     environment:
       - LOG_LEVEL=DEBUG
+      - DATA_DIR=/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -19,7 +19,5 @@ services:
       retries: 3
 
 volumes:
-  insta-sessions:
-    driver: local
-  insta-config:
+  insta-data:
     driver: local

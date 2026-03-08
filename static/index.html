@@ -36,12 +36,55 @@
             placeholder="Şifre"
             autocomplete="current-password"
           />
+          <input
+            class="input-field"
+            id="auth-hint"
+            type="text"
+            placeholder="Şifre ipucu (opsiyonel — şifre sıfırlamak için)"
+            autocomplete="off"
+            style="display:none;"
+          />
           <button class="btn btn-primary btn-full" id="auth-submit-btn">
             Giriş Yap
           </button>
           <div class="auth-error" id="auth-error"></div>
+          <button class="btn-link" id="auth-forgot-link" style="display:none;">
+            Şifreni mi unuttun? <span>Sıfırla</span>
+          </button>
           <button class="btn-link" id="auth-toggle-link">
             Hesabın yok mu? <span>Kayıt ol</span>
+          </button>
+        </div>
+
+        <!-- Şifre sıfırlama formu -->
+        <div class="form-col" id="reset-form" style="display:none;">
+          <input
+            class="input-field"
+            id="reset-username"
+            type="text"
+            placeholder="Kullanıcı adı"
+            autocomplete="username"
+          />
+          <input
+            class="input-field"
+            id="reset-hint"
+            type="text"
+            placeholder="Şifre ipucu cevabı"
+            autocomplete="off"
+          />
+          <input
+            class="input-field"
+            id="reset-new-password"
+            type="password"
+            placeholder="Yeni şifre"
+            autocomplete="new-password"
+          />
+          <button class="btn btn-primary btn-full" id="reset-submit-btn">
+            🔓 Şifreyi Sıfırla
+          </button>
+          <div class="auth-error" id="reset-error"></div>
+          <button class="btn-link" id="reset-back-link">
+            ← <span>Giriş sayfasına dön</span>
           </button>
         </div>
       </div>

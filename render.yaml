@@ -1,0 +1,18 @@
+# ─── Render Blueprint ─────────────────────────────────────────────────
+# Render.com ücretsiz deploy config
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: ig-group-sharing
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    envVars:
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATA_DIR
+        value: /data
+    healthCheckPath: /health
+

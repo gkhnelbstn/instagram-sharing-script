@@ -1,0 +1,15 @@
+# ─── Railway Configuration ────────────────────────────────────────────
+# Deploy: GitHub repo bağla → otomatik deploy
+# Docs: https://docs.railway.com/
+
+[build]
+  builder = "DOCKERFILE"
+  dockerfilePath = "Dockerfile"
+
+[deploy]
+  startCommand = "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+  healthcheckPath = "/health"
+  healthcheckTimeout = 300
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 10
+

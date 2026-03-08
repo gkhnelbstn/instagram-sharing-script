@@ -75,6 +75,11 @@ function showAuthOverlay() {
   document.getElementById('auth-error').textContent = '';
   document.getElementById('auth-username').value = '';
   document.getElementById('auth-password').value = '';
+  document.getElementById('auth-hint').value = '';
+  // Reset form gizle, auth form göster
+  document.getElementById('auth-form').style.display = '';
+  document.getElementById('reset-form').style.display = 'none';
+  setAuthMode('login');
 }
 
 function hideAuthOverlay(username) {
@@ -93,6 +98,16 @@ function setAuthMode(mode) {
     ? 'Hesabın yok mu? <span>Kayıt ol</span>'
     : 'Zaten hesabın var mı? <span>Giriş yap</span>';
   document.getElementById('auth-error').textContent = '';
+
+  // Şifre ipucu alanı sadece kayıt modunda göster
+  document.getElementById('auth-hint').style.display = isLogin ? 'none' : '';
+
+  // Şifremi unuttum linki sadece login modunda göster
+  document.getElementById('auth-forgot-link').style.display = isLogin ? '' : 'none';
+
+  // Auth form göster, reset form gizle
+  document.getElementById('auth-form').style.display = '';
+  document.getElementById('reset-form').style.display = 'none';
 }
 
 document.getElementById('auth-toggle-link').addEventListener('click', () => {
@@ -102,6 +117,7 @@ document.getElementById('auth-toggle-link').addEventListener('click', () => {
 document.getElementById('auth-submit-btn').addEventListener('click', async () => {
   const username = document.getElementById('auth-username').value.trim();
   const password = document.getElementById('auth-password').value;
+  const hint = document.getElementById('auth-hint').value.trim();
   const errEl = document.getElementById('auth-error');
   const btn = document.getElementById('auth-submit-btn');
 
@@ -116,7 +132,11 @@ document.getElementById('auth-submit-btn').addEventListener('click', async () =>
 
   try {
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const data = await API.post(endpoint, { username, password });
+    const body = { username, password };
+    if (authMode === 'register' && hint) {
+      body.password_hint = hint;
+    }
+    const data = await API.post(endpoint, body);
     hideAuthOverlay(data.username);
     showToast(`Hoş geldin, ${data.username}!`, 'success');
   } catch (e) {
@@ -130,6 +150,62 @@ document.getElementById('auth-submit-btn').addEventListener('click', async () =>
 // Enter key
 document.getElementById('auth-password').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
+});
+
+// ─── Forgot password / Reset ─────────────────────────────────────────
+
+document.getElementById('auth-forgot-link').addEventListener('click', () => {
+  document.getElementById('auth-form').style.display = 'none';
+  document.getElementById('reset-form').style.display = '';
+  document.getElementById('auth-subtitle').textContent = 'Şifre sıfırla';
+  document.getElementById('reset-error').textContent = '';
+  document.getElementById('reset-username').value = document.getElementById('auth-username').value.trim();
+  document.getElementById('reset-hint').value = '';
+  document.getElementById('reset-new-password').value = '';
+});
+
+document.getElementById('reset-back-link').addEventListener('click', () => {
+  setAuthMode('login');
+});
+
+document.getElementById('reset-submit-btn').addEventListener('click', async () => {
+  const username = document.getElementById('reset-username').value.trim();
+  const hint = document.getElementById('reset-hint').value.trim();
+  const newPassword = document.getElementById('reset-new-password').value;
+  const errEl = document.getElementById('reset-error');
+  const btn = document.getElementById('reset-submit-btn');
+
+  if (!username || !hint || !newPassword) {
+    errEl.textContent = 'Tüm alanlar zorunlu.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  errEl.textContent = '';
+
+  try {
+    // Önce ipucu var mı kontrol et
+    await API.get(`/api/auth/hint?username=${encodeURIComponent(username)}`);
+
+    // Şifreyi sıfırla
+    const data = await API.post('/api/auth/reset-password', {
+      username,
+      password_hint: hint,
+      new_password: newPassword,
+    });
+    hideAuthOverlay(data.username);
+    showToast('Şifre başarıyla sıfırlandı!', 'success');
+  } catch (e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔓 Şifreyi Sıfırla';
+  }
+});
+
+document.getElementById('reset-new-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('reset-submit-btn').click();
 });
 
 // Logout

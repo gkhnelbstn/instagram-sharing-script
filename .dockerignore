@@ -1,0 +1,12 @@
+.git
+.gitignore
+*.md
+logs.txt
+sessions/
+config/
+__pycache__/
+.venv/
+.env
+fly.toml
+docker-compose.yml
+
