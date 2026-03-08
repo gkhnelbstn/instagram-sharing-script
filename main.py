@@ -25,6 +25,7 @@ from instagrapi.exceptions import (
     ChallengeRequired,
     LoginRequired,
     TwoFactorRequired,
+    UnknownError,
 )
 from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 
@@ -37,6 +38,7 @@ from models import (
     AppUser,
     GroupResult,
     RegisterRequest,
+    ResetPasswordRequest,
     SaveGroupsRequest,
     SendRequest,
     SendResponse,
@@ -65,12 +67,12 @@ logging.getLogger("instagrapi").setLevel(logging.DEBUG)
 logging.getLogger("public_request").setLevel(logging.DEBUG)
 logging.getLogger("private_request").setLevel(logging.DEBUG)
 
-SESSIONS_DIR = Path("sessions")
-SESSIONS_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+SESSIONS_DIR = DATA_DIR / "sessions"
+SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-CONFIG_DIR = Path("config")
-CONFIG_DIR.mkdir(exist_ok=True)
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_DIR = DATA_DIR / "config"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = CONFIG_DIR / "users.json"
 
 SESSION_COOKIE = "ig_session"
@@ -250,6 +252,25 @@ def _get_client(username: str, password: str) -> Client:
                     "tekrar Login butonuna basın."
                 ),
             )
+        except UnknownError as exc:
+            err_msg = str(exc)
+            logger.error(
+                "[%s] Instagram hesap hatası (session ile): %s\n%s",
+                username,
+                err_msg,
+                traceback.format_exc(),
+            )
+            session_file.unlink(missing_ok=True)
+            if "invalid_credentials" in err_msg.lower() or "can't find" in err_msg.lower() or "invalid_user" in err_msg.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Instagram hesabı bulunamadı veya bilgiler hatalı: {username}. "
+                    "Kullanıcı adını kontrol edin.",
+                )
+            raise HTTPException(
+                status_code=401,
+                detail=f"Instagram giriş hatası ({username}): {err_msg}",
+            )
         except Exception as exc:
             logger.error(
                 "[%s] Session ile giriş başarısız: %s\n%s",
@@ -257,8 +278,16 @@ def _get_client(username: str, password: str) -> Client:
                 exc,
                 traceback.format_exc(),
             )
+            err_msg = str(exc)
             # Session dosyası bozuk olabilir, bir sonraki denemede temiz başla
             session_file.unlink(missing_ok=True)
+            # invalid_credentials hatalarını 500 yerine düzgün döndür
+            if "invalid_credentials" in err_msg.lower() or "can't find" in err_msg.lower() or "invalid_user" in err_msg.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Instagram hesabı bulunamadı veya bilgiler hatalı: {username}. "
+                    "Kullanıcı adını kontrol edin.",
+                )
 
     # ── 2) Session yoksa / başarısızsa → şifre ile login ──
     if not login_via_session:
@@ -309,6 +338,25 @@ def _get_client(username: str, password: str) -> Client:
                     "uyarısını ('Bendim' diyerek) onaylayıp tekrar Login butonuna basın."
                 ),
             )
+        except UnknownError as exc:
+            err_msg = str(exc)
+            logger.error(
+                "[%s] Instagram hesap hatası: %s\n%s",
+                username,
+                err_msg,
+                traceback.format_exc(),
+            )
+            # "invalid_credentials" veya "invalid_user" gibi hataları yakala
+            if "invalid_credentials" in err_msg.lower() or "can't find" in err_msg.lower() or "invalid_user" in err_msg.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Instagram hesabı bulunamadı veya bilgiler hatalı: {username}. "
+                    "Kullanıcı adını kontrol edin.",
+                )
+            raise HTTPException(
+                status_code=401,
+                detail=f"Instagram giriş hatası ({username}): {err_msg}",
+            )
         except Exception as exc:
             logger.error(
                 "[%s] Login hatası: %s\n%s",
@@ -316,6 +364,14 @@ def _get_client(username: str, password: str) -> Client:
                 exc,
                 traceback.format_exc(),
             )
+            err_msg = str(exc)
+            # UnknownError olarak yakalanmamış ama invalid_credentials içeren hatalar
+            if "invalid_credentials" in err_msg.lower() or "can't find" in err_msg.lower() or "invalid_user" in err_msg.lower():
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Instagram hesabı bulunamadı veya bilgiler hatalı: {username}. "
+                    "Kullanıcı adını kontrol edin.",
+                )
             raise HTTPException(
                 status_code=500,
                 detail=f"Login hatası: {type(exc).__name__}: {exc}",
@@ -367,6 +423,7 @@ def register(req: RegisterRequest, response: Response):
         username=req.username,
         hashed_password=_hash_password(req.password),
         session_token=token,
+        password_hint=req.password_hint.strip() if req.password_hint and req.password_hint.strip() else None,
     )
     users.users.append(new_user)
     _save_users(users)
@@ -387,6 +444,53 @@ def app_login(req: AppLoginRequest, response: Response):
     user = next((u for u in users.users if u.username.lower() == req.username.lower()), None)
     if not user or not _check_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+    token = secrets.token_urlsafe(32)
+    user.session_token = token
+    _save_users(users)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return {"ok": True, "username": user.username}
+
+
+@app.get("/api/auth/hint")
+def get_password_hint(username: str):
+    """Kullanıcının şifre sıfırlama ipucu var mı kontrol et."""
+    users = _load_users()
+    user = next((u for u in users.users if u.username.lower() == username.lower()), None)
+    if not user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if not user.password_hint:
+        raise HTTPException(
+            status_code=404,
+            detail="Bu kullanıcı için şifre ipucu tanımlanmamış.",
+        )
+    return {"has_hint": True, "username": user.username}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(req: ResetPasswordRequest, response: Response):
+    """Şifre ipucuyla şifre sıfırlama."""
+    if not req.username or not req.password_hint or not req.new_password:
+        raise HTTPException(status_code=400, detail="Tüm alanlar zorunlu.")
+    if len(req.new_password) < 4:
+        raise HTTPException(status_code=400, detail="Yeni şifre en az 4 karakter olmalı.")
+    users = _load_users()
+    user = next((u for u in users.users if u.username.lower() == req.username.lower()), None)
+    if not user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if not user.password_hint:
+        raise HTTPException(
+            status_code=400,
+            detail="Bu kullanıcı için şifre ipucu tanımlanmamış. Sıfırlama yapılamaz.",
+        )
+    if user.password_hint.strip().lower() != req.password_hint.strip().lower():
+        raise HTTPException(status_code=401, detail="Şifre ipucu yanlış.")
+    user.hashed_password = _hash_password(req.new_password)
     token = secrets.token_urlsafe(32)
     user.session_token = token
     _save_users(users)
@@ -581,6 +685,9 @@ def _send_to_thread(
     """
     Bir thread'e link + opsiyonel mesaj gönder.
 
+    Instagram gönderisi ise media_share dener; başarısız olursa veya
+    Instagram dışı bir link ise düz metin olarak gönderir.
+
     Returns:
         (güncellenmiş media_pk, method_used)
     """
@@ -600,8 +707,9 @@ def _send_to_thread(
 
         if media_pk is not None:
             try:
-                # direct_media_share sadece user_ids alıyor (thread_ids yok)
-                # Thread'in kullanıcılarını al
+                # direct_media_share thread_ids desteklemiyor, user_ids istiyor.
+                # Bu yüzden thread üyelerini alıp user_ids ile gönderiyoruz.
+                # NOT: Bu yeni bir thread oluşturabilir; sorun olursa fallback'e düşer.
                 thread = cl.direct_thread(int(thread_id), amount=1)
                 user_ids = [int(u.pk) for u in thread.users]
                 if not user_ids:
@@ -619,9 +727,11 @@ def _send_to_thread(
                 )
             except Exception as exc:
                 logger.warning(
-                    "direct_media_share başarısız, düz link gönderiliyor: %s", exc
+                    "direct_media_share başarısız (%s), düz link gönderiliyor: %s",
+                    type(exc).__name__,
+                    exc,
                 )
-                # Fallback: düz link olarak gönder
+                # Fallback: düz link olarak thread'e gönder
                 cl.direct_send(text=link, thread_ids=[int(thread_id)])
                 method_used = "text_fallback"
         else:

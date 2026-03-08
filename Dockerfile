@@ -19,8 +19,8 @@ RUN uv sync --no-dev --no-install-project
 COPY main.py models.py ./
 COPY static/ ./static/
 
-# Session & config dirs
-RUN mkdir -p sessions
+# Default data dir (Fly.io'da volume mount eder, lokalde boş kalır)
+RUN mkdir -p /data
 
 EXPOSE 8000
 

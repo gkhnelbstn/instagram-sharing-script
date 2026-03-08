@@ -51,6 +51,7 @@ class AppUser(BaseModel):
     username: str
     hashed_password: str  # bcrypt hash
     session_token: str | None = None  # aktif oturum tokeni
+    password_hint: str | None = None  # şifre sıfırlama ipucu
 
 
 class UsersConfig(BaseModel):
@@ -123,9 +124,17 @@ class SendResponse(BaseModel):
 class RegisterRequest(BaseModel):
     username: str
     password: str
+    password_hint: str | None = None  # şifre sıfırlama ipucu
 
 
 class AppLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    password_hint: str
+    new_password: str
+
 
