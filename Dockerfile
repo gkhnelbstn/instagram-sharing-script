@@ -22,6 +22,6 @@ COPY static/ ./static/
 # Default data dir (Fly.io'da volume mount eder, lokalde boş kalır)
 RUN mkdir -p /data
 
-EXPOSE 8000
+EXPOSE 8080
 
-CMD ["sh", "-c", "uv run uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "PORT_VALUE=${PORT:-8080}; echo Using PORT=${PORT_VALUE}; uv run uvicorn main:app --host 0.0.0.0 --port ${PORT_VALUE}"]
