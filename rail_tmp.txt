@@ -1,0 +1,2 @@
+﻿{"status":"error","code":502,"message":"Application failed to respond","request_id":"MGLlMuD1Q8qf8cde21mRUA"}
+HTTP_CODE:502

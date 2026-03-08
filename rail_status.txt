@@ -1,0 +1,3 @@
+﻿Service: instagram-sharing-script
+Deployment: 87a237a0-7253-489c-83e7-930b5e952b13
+Status: SUCCESS

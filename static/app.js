@@ -99,6 +99,9 @@ function setAuthMode(mode) {
     : 'Zaten hesabın var mı? <span>Giriş yap</span>';
   document.getElementById('auth-error').textContent = '';
 
+  // Toggle link her zaman görünür olmalı
+  document.getElementById('auth-toggle-link').style.display = '';
+
   // Şifre ipucu alanı sadece kayıt modunda göster
   document.getElementById('auth-hint').style.display = isLogin ? 'none' : '';
 
@@ -224,10 +227,11 @@ async function initApp() {
     // Önce kurulum gerekli mi kontrol et
     const setup = await fetch('/api/auth/setup').then(r => r.json());
     if (setup.needs_setup) {
+      showAuthOverlay();
       setAuthMode('register');
       document.getElementById('auth-toggle-link').style.display = 'none';
+      document.getElementById('auth-forgot-link').style.display = 'none';
       document.getElementById('auth-subtitle').textContent = 'İlk kullanım — hesap oluştur';
-      showAuthOverlay();
       return;
     }
 
